@@ -1,11 +1,14 @@
 // ===== Estado e persistência (localStorage) =====
 const KEY='financas.v1',$=s=>document.querySelector(s);
-const DEF=()=>({tx:[],xp:[],av:[],wss:{saldo:0,aportes:[]},cfg:{usd:5.5,theme:'auto'}});
-const merge=d=>({...DEF(),...d,cfg:{...DEF().cfg,...d.cfg}});
-let S=load();
+const DEF=()=>({tx:[],inv:{xp:[],wss:[],av:[]},cfg:{usd:5.5,theme:'auto',autoDays:7}});
+const merge=d=>{const m={...DEF(),...d,cfg:{...DEF().cfg,...d.cfg},inv:{...DEF().inv,...d.inv}};
+  if(!d.inv){const sm=a=>(a||[]).reduce((s,x)=>s+x.qty*x.price,0),v={xp:sm(d.xp),av:sm(d.av),wss:d.wss?.saldo||0};
+    for(const k in v)if(v[k]>0)m.inv[k]=[{id:Math.random().toString(36).slice(2,10),month:new Date().toISOString().slice(0,7),saldo:v[k],aporte:0,patr:0,fx:m.cfg.usd}]}
+  delete m.xp;delete m.av;delete m.wss;return m};
+let S=load(),FH=null,wt;
 function load(){try{const d=JSON.parse(localStorage.getItem(KEY));return d?merge(d):DEF()}catch{return DEF()}}
-const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch{alert('Não foi possível salvar os dados neste navegador.')}};
-const ui={tab:'dash',per:'cur',from:'',to:'',inv:'xp'};
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch{alert('Não foi possível salvar os dados neste navegador.')}clearTimeout(wt);wt=setTimeout(fileWrite,800)};
+const ui={tab:'dash',per:'cur',from:'',to:'',inv:'xp',ch:'all'};
 
 // ===== Utilitários =====
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
@@ -30,22 +33,43 @@ function range(p){const n=new Date(),y=n.getFullYear(),m=n.getMonth();
 const inR=([a,b])=>S.tx.filter(t=>t.date>=a&&t.date<=b);
 const inc=L=>sum(L.filter(t=>t.type=='r'),t=>t.amount), outc=L=>sum(L.filter(t=>t.type=='d'),t=>t.amount);
 
-function totals(){const R=S.cfg.usd,
-  xp=sum(S.xp,a=>a.qty*a.price),xpc=sum(S.xp,a=>a.qty*a.avg),
-  avU=sum(S.av,a=>a.qty*a.price),avc=sum(S.av,a=>a.qty*a.avg)*R,av=avU*R,
-  ap=sum(S.wss.aportes,a=>a.part+a.patr),ws=S.wss.saldo,cash=sum(S.tx,signed),inv=xp+av+ws;
-  return{xp,xpc,av,avU,avc,ap,ws,cash,inv,net:inv+cash}}
+// Primeiro mês de cada corretora = ponto de partida (sem rendimento).
+// Demais meses: rendimento = saldo - saldo anterior - aportes; % = rendimento / (saldo anterior + aportes).
+const apT=e=>(e.aporte||0)+(e.patr||0);
+function stats(k){let prev=null;
+  return [...S.inv[k]].sort((a,b)=>a.month.localeCompare(b.month)).map(e=>{const ap=apT(e),base=prev==null?0:prev+ap,rend=prev==null?0:e.saldo-prev-ap;prev=e.saldo;return{...e,ap,rend,base,pct:base>0?rend/base*100:null}})}
+const prevOf=(k,m,id)=>S.inv[k].filter(e=>e.month<m&&e.id!=id).sort((a,b)=>a.month.localeCompare(b.month)).pop()?.saldo??null;
+const acum=L=>{const p=L.filter(e=>e.pct!=null);return p.length?(p.reduce((m,e)=>m*(1+e.pct/100),1)-1)*100:null};
+function series(f){const M={};
+  ['xp','wss','av'].forEach(k=>{if(f=='all'||f==k)stats(k).forEach(e=>{const x=k=='av'?(e.fx||S.cfg.usd):1,m=M[e.month]||(M[e.month]={ap:0,rend:0});m.ap+=e.ap*x;m.rend+=e.rend*x})});
+  return Object.entries(M).sort((a,b)=>a[0].localeCompare(b[0])).slice(-12)}
+function totals(){const o={};
+  for(const k of['xp','wss','av']){const L=stats(k),l=L[L.length-1];o[k]={saldo:l?.saldo||0,rend:sum(L,e=>e.rend),ap:sum(L,e=>e.ap),pct:acum(L)}}
+  const xp=o.xp.saldo,ws=o.wss.saldo,av=o.av.saldo*S.cfg.usd,cash=sum(S.tx,signed),inv=xp+ws+av;
+  return{o,xp,ws,av,avU:o.av.saldo,cash,inv,net:inv+cash}}
 
 // ===== Views =====
 const NAV=[['dash','Dashboard','M4 20V10M10 20V4M16 20v-8M22 20H2'],['tx','Transações','M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4'],['inv','Investimentos','M3 17l6-6 4 4 8-8M15 7h6v6'],['cfg','Configurações','M12 9a3 3 0 100 6 3 3 0 000-6zM12 2v3M12 19v3M2 12h3M19 12h3']];
 const row=(n,v,p,sub)=>`<div class=item><div><b>${n}</b>${sub?`<small>${sub}</small>`:''}</div><div class=r><b>${money(v)}</b>${pl(p)}</div></div>`;
 const fab=a=>`<button class=fab data-a=${a} aria-label="Adicionar">+</button>`;
 
-function dash(){const T=totals(),m=inR(range('cur')),i=inc(m),o=outc(m),acc={};
+function chart(D){if(!D.length)return'<p class=mut>Registre os saldos mensais em Investimentos para ver o gráfico.</p>';
+  const W=320,H=150,P=16,n=D.length,mx=Math.max(1,...D.map(d=>Math.max(d[1].ap,d[1].rend))),mn=Math.min(0,...D.map(d=>d[1].rend)),
+  y=v=>P+(mx-v)/(mx-mn)*(H-2*P-8),z=y(0),gw=W/n,bw=Math.min(14,gw*.36),
+  bar=(x,v,c,t)=>`<rect x="${x}" y="${Math.min(y(v),z)}" width="${bw}" height="${Math.max(1,Math.abs(y(v)-z))}" rx="2" fill="${c}"><title>${t}: ${money(v)}</title></rect>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Aporte e rendimento por mês"><line x1="0" x2="${W}" y1="${z}" y2="${z}" stroke="currentColor" opacity=".25"/>${D.map(([m,d],i)=>{const cx=gw*i+gw/2;return bar(cx-bw-1,d.ap,'#2563eb','Aporte')+bar(cx+1,d.rend,'#d97706','Rendimento')+`<text x="${cx}" y="${H-4}" text-anchor="middle" font-size="8" fill="currentColor" opacity=".7">${m.slice(5)}/${m.slice(2,4)}</text>`}).join('')}</svg>
+  <div class=lg><span><i style="background:#2563eb"></i>Aporte ${money(sum(D,d=>d[1].ap))}</span><span><i style="background:#d97706"></i>Rendimento ${money(sum(D,d=>d[1].rend))}</span></div>`}
+
+function dash(){const T=totals(),m=inR(range('cur')),i=inc(m),o=outc(m),acc={},
+  segc=`<div class=seg>${[['all','Total'],['xp','XP'],['wss','WSS'],['av','Avenue']].map(([k,l])=>`<button data-a=chart data-id=${k} class="${ui.ch==k?'on':''}">${l}</button>`).join('')}</div>`;
   S.tx.forEach(t=>{const k=t.acc||'Sem conta';acc[k]=(acc[k]||0)+signed(t)});
-  return `<div class="card hero"><h4>Patrimônio líquido</h4><b>${money(T.net)}</b><small>Investimentos ${money(T.inv)} + caixa ${money(T.cash)}</small></div>
+  const ap=k=>'Aportes registrados: '+money(T.o[k].ap);
+  return `${due()?`<div class=card><b>Hora de fazer backup</b><small style="margin-bottom:8px">Último backup: ${lastB()?fmtD(iso(new Date(lastB()))):'nunca'}</small><button class=ghost data-a=backup>Fazer backup agora</button></div>`:''}
+  ${DP?'<div class="card cols" style="align-items:center"><div><b>Instalar o app</b><small>Tela cheia e uso offline.</small></div><button class=ghost data-a=install style="flex:0 0 auto">Instalar</button></div>':''}
+  <div class="card hero"><h4>Patrimônio líquido</h4><b>${money(T.net)}</b><small>Investimentos ${money(T.inv)} + caixa ${money(T.cash)}</small></div>
   <div class=card><h4>Saldo do mês</h4><div class=cols><div><small>Entradas</small><b class=in>${money(i)}</b></div><div><small>Saídas</small><b class=out>${money(o)}</b></div><div><small>Resultado</small><b class="${i>=o?'in':'out'}">${money(i-o)}</b></div></div></div>
-  <div class=card><h4>Por corretora</h4>${row('XP',T.xp,rent(T.xp,T.xpc))}${row('WSS Previdência',T.ws,rent(T.ws,T.ap))}${row('Avenue',T.av,rent(T.av,T.avc),money(T.avU,1)+' a '+S.cfg.usd.toFixed(2).replace('.',',')+' por US$')}</div>
+  <div class=card><h4>Aporte e rendimento por mês</h4>${segc}${chart(series(ui.ch))}</div>
+  <div class=card><h4>Por corretora</h4>${row('XP',T.xp,T.o.xp.pct,ap('xp'))}${row('WSS Previdência',T.ws,T.o.wss.pct,ap('wss'))}${row('Avenue',T.av,T.o.av.pct,money(T.avU,1)+' a R$ '+S.cfg.usd.toFixed(2).replace('.',','))}</div>
   <div class=card><h4>Contas</h4>${Object.entries(acc).map(([k,v])=>row(esc(k),v)).join('')||'<p class=mut>Cadastre uma transação para ver o saldo por conta.</p>'}</div>`}
 
 function donut(items){const t=sum(items,i=>i[1]);if(!t)return'<p class=mut>Nenhuma despesa no período.</p>';let off=0;
@@ -61,17 +85,22 @@ function tx(){const L=inR(range(ui.per)).sort((x,y)=>y.date.localeCompare(x.date
   <div class=card><h4>Despesas por categoria</h4>${donut(Object.entries(by).sort((a,b)=>b[1]-a[1]))}</div>
   <div class=card>${L.map(t=>`<div class=item data-a=edittx data-id=${t.id}><div><b>${esc(t.cat)}</b><small>${fmtD(t.date)}, ${esc(t.acc)}${t.note?' - '+esc(t.note):''}</small></div><b class="${t.type=='r'?'in':'out'}">${t.type=='r'?'+':'−'}${money(t.amount)}</b></div>`).join('')||'<p class=mut>Nenhum lançamento no período. Toque em + para adicionar.</p>'}</div>${fab('addtx')}`}
 
-function inv(){const k=ui.inv,T=totals(),u=k=='av',
+function inv(){const k=ui.inv,u=k=='av',T=totals(),t=T.o[k],L=stats(k).reverse(),mm=m=>m.slice(5)+'/'+m.slice(0,4),
   seg=`<div class=seg>${[['xp','XP'],['wss','WSS'],['av','Avenue']].map(([a,l])=>`<button data-a=invtab data-id=${a} class="${k==a?'on':''}">${l}</button>`).join('')}</div>`;
-  if(k=='wss'){const w=S.wss;return seg+`<div class=card><h4>Saldo acumulado</h4><b class=big>${money(w.saldo)}</b><div class=cols style="margin:10px 0"><div><small>Total aportado</small><b>${money(T.ap)}</b></div><div><small>Rentabilidade</small><b>${money(w.saldo-T.ap)}</b>${pl(rent(w.saldo,T.ap))}</div></div><button class=ghost data-a=wsssaldo>Atualizar saldo</button></div>
-  <div class=card><h4>Aportes mensais</h4>${[...w.aportes].sort((a,b)=>b.date.localeCompare(a.date)).map(a=>`<div class=item data-a=editap data-id=${a.id}><div><b>${fmtD(a.date)}</b><small>Participante ${money(a.part)}, patronal ${money(a.patr)}</small></div><b>${money(a.part+a.patr)}</b></div>`).join('')||'<p class=mut>Nenhum aporte registrado. Toque em + para adicionar.</p>'}</div>${fab('addap')}`}
-  const L=[...S[k]].sort((a,b)=>b.qty*b.price-a.qty*a.price),v=sum(L,a=>a.qty*a.price),c=sum(L,a=>a.qty*a.avg);
-  return seg+`<div class=card><h4>${u?'Carteira internacional':'Carteira XP'}</h4><b class=big>${money(v,u)}</b>${u?`<small>${money(v*S.cfg.usd)} no câmbio atual</small>`:''}<div class=cols style="margin-top:10px"><div><small>Resultado</small><b class="${v>=c?'in':'out'}">${money(v-c,u)}</b></div><div><small>Rentabilidade</small>${pl(rent(v,c))||'<b>-</b>'}</div></div></div>
-  <div class=card>${L.map(a=>`<div class=item data-a=editinv data-id=${a.id}><div><b>${esc(a.ticker)}</b><small>${esc(a.cls)}: ${a.qty} × ${money(a.avg,u)}, atual ${money(a.price,u)}</small></div><div class=r><b>${money(a.qty*a.price,u)}</b>${pl(rent(a.price,a.avg))}</div></div>`).join('')||'<p class=mut>Nenhum ativo. Toque em + para adicionar.</p>'}</div>${fab('addinv')}`}
+  return seg+`<div class=card><h4>${{xp:'XP',wss:'WSS Previdência',av:'Avenue'}[k]}: saldo atual</h4><b class=big>${money(t.saldo,u)}</b>${u?`<small>${money(T.av)} no câmbio de R$ ${S.cfg.usd.toFixed(2).replace('.',',')}</small>`:''}
+  <div class=cols style="margin-top:10px"><div><small>Rendimento acumulado</small><b class="${t.rend>=0?'in':'out'}">${money(t.rend,u)}</b>${pl(t.pct)}</div><div><small>Aportes registrados</small><b>${money(t.ap,u)}</b></div></div></div>
+  <div class=card><h4>Histórico mensal</h4>${L.map(e=>`<div class=item data-a=editinv data-id=${e.id}><div><b>${mm(e.month)}</b><small>Aporte ${money(e.ap,u)}${k=='wss'?` (patronal ${money(e.patr||0)})`:''}</small></div><div class=r><b>${money(e.saldo,u)}</b><small class="${e.rend>=0?'in':'out'}">${e.pct==null?'ponto de partida':money(e.rend,u)+' ('+pct(e.pct)+')'}</small></div></div>`).join('')||'<p class=mut>Nenhum mês registrado. Toque em + e informe o saldo total.</p>'}</div>${fab('addinv')}`}
 
-const cfg=()=>`<div class=card><h4>Aparência</h4><select id=theme>${[['auto','Automático'],['light','Claro'],['dark','Escuro']].map(([v,l])=>`<option value=${v} ${S.cfg.theme==v?'selected':''}>${l}</option>`).join('')}</select></div>
-<div class=card><h4>Câmbio USD para BRL (Avenue)</h4><div class=cols><input id=usd type=number step=any inputmode=decimal value="${S.cfg.usd}"><button class=ghost data-a=fx>Buscar online</button></div><small id=fxmsg>Edite manualmente ou busque a cotação atual.</small></div>
-<div class=card><h4>Dados neste aparelho</h4><div class=col><button class=ghost data-a=export>Exportar backup (JSON)</button><label class=ghost>Importar backup<input type=file id=imp accept=application/json hidden></label><button class="ghost danger" data-a=wipe>Apagar todos os dados</button></div></div>`;
+const cfg=()=>{const ua=navigator.userAgent,emb=/; wv\)|FBAN|FBAV|Instagram/.test(ua),ios=/iphone|ipad|ipod/i.test(ua),sa=matchMedia('(display-mode:standalone)').matches||navigator.standalone,
+  ck=(b,t)=>`<small class="${b?'in':'out'}">${b?'✔':'✘'} ${t}</small>`,
+  last=lastB()?fmtD(iso(new Date(lastB()))):'nunca';
+  return `<div class=card><h4>Aparência</h4><select id=theme>${[['auto','Automático'],['light','Claro'],['dark','Escuro']].map(([v,l])=>`<option value=${v} ${S.cfg.theme==v?'selected':''}>${l}</option>`).join('')}</select></div>
+<div class=card><h4>Instalar no celular</h4>${sa?ck(1,'O app já está instalado.'):ck(isSecureContext,isSecureContext?'Conexão segura (HTTPS)':'Sem HTTPS. Abra o endereço https://, senão o navegador não oferece instalar.')+ck(SWOK,SWOK?'Modo offline ativo':'Modo offline ainda não ativo')+(emb?ck(0,'Navegador embutido (WhatsApp, Instagram...). Abra o link no Chrome ou no Safari.'):'')+(DP?'<button class=ghost style="margin-top:8px" data-a=install>Instalar app</button>':`<small style="margin-top:6px">${ios?'No Safari: Compartilhar, depois Adicionar à Tela de Início.':'No Chrome: menu ⋮, depois Instalar app (ou Adicionar à tela inicial).'}</small>`)}</div>
+<div class=card><h4>Câmbio USD para BRL (Avenue)</h4><div class=cols><input id=usd type=number step=any inputmode=decimal value="${S.cfg.usd}"><button class=ghost data-a=fx>Buscar online</button></div><small id=fxmsg>Usado para converter o saldo da Avenue no patrimônio.</small></div>
+<div class=card><h4>Backup (JSON)</h4>${window.showSaveFilePicker?`<small>${FH?'Salvamento automático ativo: '+esc(FH.name):'Vincule um arquivo e o app grava nele a cada alteração.'}</small><div class=cols style="margin:8px 0"><button class=ghost data-a=link>${FH?'Trocar arquivo':'Vincular arquivo'}</button>${FH?'<button class=ghost data-a=reativar>Reativar</button>':''}</div>`:'<small>Este navegador (comum em celulares) não grava arquivos sozinho. Use o backup manual e o lembrete.</small>'}
+<div class=col style="margin-top:8px"><button class=ghost data-a=backup>Fazer backup agora</button><label class=ghost>Importar backup<input type=file id=imp accept=application/json hidden></label>
+<label class=mut>Lembrete de backup<select id=auto>${[[0,'Desligado'],[1,'Todo dia'],[7,'Toda semana'],[30,'Todo mês']].map(([v,l])=>`<option value=${v} ${S.cfg.autoDays==v?'selected':''}>${l}</option>`).join('')}</select></label><small>Último backup: ${last}</small>
+<button class="ghost danger" data-a=wipe>Apagar todos os dados</button></div></div>`};
 const VIEW={dash,tx,inv,cfg};
 
 // ===== Formulário genérico (bottom sheet) =====
@@ -85,26 +114,43 @@ function sheet(title,fields,o,onSave,onDel){const el=$('#sheet');
 function txForm(id){const t=S.tx.find(x=>x.id==id)||{type:'d',date:today(),amount:'',cat:'',acc:'Conta corrente',note:''};
   sheet(id?'Editar lançamento':'Novo lançamento',[{k:'type',l:'Tipo',opts:[['d','Despesa'],['r','Receita']]},{k:'amount',l:'Valor (R$)',t:'number'},{k:'date',l:'Data',t:'date'},{k:'cat',l:'Categoria',opts:CAT[t.type]},{k:'acc',l:'Conta ou origem',list:'accs'},{k:'note',l:'Observações',opt:1}],t,
     r=>id?Object.assign(t,r):S.tx.push({...r,id:uid()}),id&&(()=>S.tx=S.tx.filter(x=>x!==t)))}
-function invForm(id){const k=ui.inv,L=S[k],u=k=='av',a=L.find(x=>x.id==id)||{ticker:'',cls:'',qty:'',avg:'',price:''},m=u?'US$':'R$';
-  sheet(id?'Editar ativo':'Novo ativo',[{k:'ticker',l:'Ticker ou nome'},{k:'cls',l:'Classe',opts:u?['Stock','ETF','REIT','Outro']:['Ação','FII','Tesouro Direto','Fundo','Renda fixa','Outro']},{k:'qty',l:'Quantidade',t:'number'},{k:'avg',l:`Preço médio (${m})`,t:'number'},{k:'price',l:`Preço atual (${m})`,t:'number'}],a,
-    r=>{r.ticker=r.ticker.toUpperCase();id?Object.assign(a,r):L.push({...r,id:uid()})},id&&(()=>S[k]=L.filter(x=>x!==a)))}
-function apForm(id){const a=S.wss.aportes.find(x=>x.id==id)||{date:today(),part:'',patr:''};
-  sheet(id?'Editar aporte':'Novo aporte',[{k:'date',l:'Data',t:'date'},{k:'part',l:'Participante (R$)',t:'number'},{k:'patr',l:'Patronal (R$)',t:'number'}],a,
-    r=>id?Object.assign(a,r):S.wss.aportes.push({...r,id:uid()}),id&&(()=>S.wss.aportes=S.wss.aportes.filter(x=>x!==a)))}
+function invForm(id){const k=ui.inv,u=k=='av',L=S.inv[k],e=L.find(x=>x.id==id)||{month:today().slice(0,7),saldo:'',aporte:'',patr:'',fx:S.cfg.usd},m=u?'US$':'R$',
+  F=[{k:'month',l:'Mês',t:'month'},{k:'saldo',l:`Saldo total no fim do mês (${m})`,t:'number'},{k:'aporte',l:k=='wss'?'Aporte do participante (R$)':`Aporte do mês (${m})`,t:'number',opt:1}];
+  if(k=='wss')F.push({k:'patr',l:'Aporte patronal (R$)',t:'number',opt:1});
+  if(u)F.push({k:'fx',l:'Câmbio do mês (R$ por US$)',t:'number'});
+  sheet(id?'Editar mês':'Novo mês',F,e,r=>{const d=L.find(x=>x.month==r.month&&x.id!=id);
+    if(d){Object.assign(d,r);if(id)S.inv[k]=L.filter(x=>x!==e)}else id?Object.assign(e,r):L.push({...r,id:uid()})},
+    id&&(()=>S.inv[k]=L.filter(x=>x!==e)));
+  const f=$('#sheet').firstChild,box=document.createElement('div');box.className='card';f.querySelector('.row').before(box);
+  const upd=()=>{const g=n=>parseFloat(f.elements[n]?.value)||0,p=prevOf(k,f.elements.month.value,id),ap=g('aporte')+g('patr'),r=g('saldo')-(p||0)-ap;
+    box.innerHTML=p==null?'<small>Primeiro mês registrado: é o ponto de partida. A valorização começa a ser calculada no mês seguinte.</small>':`<small>Valorização real (sem aporte)</small><b class="${r>=0?'in':'out'}">${p+ap>0?pct(r/(p+ap)*100):'-'}</b><small>Rendimento ${money(r,u)}, sobre base de ${money(p+ap,u)} (saldo anterior + aportes)</small>`};
+  f.oninput=upd;upd()}
+
+// ===== Ações =====
+// ===== Backup =====
+const LAST='financas.last',lastB=()=>+localStorage.getItem(LAST)||0,stamp=()=>localStorage.setItem(LAST,Date.now());
+const idb=(m,v)=>new Promise((ok,no)=>{const q=indexedDB.open('fin',1);q.onupgradeneeded=()=>q.result.createObjectStore('k');q.onerror=no;q.onsuccess=()=>{const s=q.result.transaction('k',m=='get'?'readonly':'readwrite').objectStore('k'),r=m=='get'?s.get('fh'):s.put(v,'fh');r.onsuccess=()=>ok(r.result);r.onerror=no}});
+async function fileWrite(){if(!FH)return;try{if(await FH.queryPermission({mode:'readwrite'})!='granted')return;const w=await FH.createWritable();await w.write(JSON.stringify(S,null,1));await w.close();stamp()}catch{}}
+const due=()=>{const d=S.cfg.autoDays;return d>0&&(S.tx.length||Object.values(S.inv).some(l=>l.length))&&Date.now()-lastB()>d*864e5};
+async function backup(){const f=new File([JSON.stringify(S,null,1)],'financas-backup-'+today()+'.json',{type:'application/json'});
+  try{if(navigator.canShare?.({files:[f]})){await navigator.share({files:[f],title:'Backup Finanças'});stamp();return render()}}catch(e){if(e.name=='AbortError')return}
+  const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=f.name;a.click();stamp();render()}
 
 // ===== Ações =====
 const ACT={
-  nav:id=>{ui.tab=id;render();scrollTo(0,0)},per:id=>{ui.per=id;render()},invtab:id=>{ui.inv=id;render()},
-  close:()=>$('#sheet').hidden=true,addtx:()=>txForm(),edittx:txForm,addinv:()=>invForm(),editinv:invForm,addap:()=>apForm(),editap:apForm,
-  wsssaldo:()=>sheet('Saldo atual da WSS',[{k:'saldo',l:'Saldo (R$)',t:'number'}],S.wss,r=>S.wss.saldo=r.saldo),
+  nav:id=>{ui.tab=id;render();scrollTo(0,0)},per:id=>{ui.per=id;render()},invtab:id=>{ui.inv=id;render()},chart:id=>{ui.ch=id;render()},
+  close:()=>$('#sheet').hidden=true,addtx:()=>txForm(),edittx:txForm,addinv:()=>invForm(),editinv:invForm,backup,
+  install:async()=>{DP.prompt();await DP.userChoice;DP=null;render()},
+  link:async()=>{try{FH=await showSaveFilePicker({suggestedName:'financas-backup.json',types:[{accept:{'application/json':['.json']}}]});await idb('put',FH);await fileWrite();render()}catch{}},
+  reativar:async()=>{try{await FH.requestPermission({mode:'readwrite'});await fileWrite();render()}catch{}},
   fx:async()=>{try{const r=await fetch('https://economia.awesomeapi.com.br/json/last/USD-BRL'),v=parseFloat((await r.json()).USDBRL.bid);if(!v)throw 0;S.cfg.usd=v;save();render();$('#fxmsg').textContent='Cotação atualizada: '+v.toFixed(4)}catch{$('#fxmsg').textContent='Sem conexão. Informe o valor manualmente.'}},
-  export:()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(S,null,1)],{type:'application/json'}));a.download='financas-backup-'+today()+'.json';a.click()},
   wipe:()=>{if(confirm('Apagar TODOS os dados deste aparelho?')){S=DEF();save();render()}}
 };
 document.addEventListener('click',e=>{if(e.target.id=='sheet')return ACT.close();const el=e.target.closest('[data-a]');if(el)ACT[el.dataset.a]?.(el.dataset.id)});
 document.addEventListener('change',e=>{const t=e.target;
   if(t.name=='type')t.form.elements.cat.innerHTML=CAT[t.value].map(x=>`<option>${x}</option>`).join('');
   else if(t.id=='theme'){S.cfg.theme=t.value;save();theme()}
+  else if(t.id=='auto'){S.cfg.autoDays=+t.value;save()}
   else if(t.id=='usd'){S.cfg.usd=parseFloat(t.value)||S.cfg.usd;save()}
   else if(t.id=='from'||t.id=='to'){ui[t.id]=t.value;render()}
   else if(t.id=='imp'&&t.files[0])t.files[0].text().then(x=>{try{const d=JSON.parse(x);if(!Array.isArray(d.tx))throw 0;S=merge(d);save();render()}catch{alert('Arquivo de backup inválido.')}})});
@@ -118,6 +164,10 @@ function render(){theme();
   $('#accs').innerHTML=[...new Set(['Conta corrente','Cartão de crédito','Dinheiro','Poupança',...S.tx.map(t=>t.acc)])].map(a=>`<option value="${esc(a)}">`).join('');
   document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.id==ui.tab))}
 $('#nav').innerHTML=NAV.map(([id,l,p])=>`<button data-a=nav data-id=${id}><svg viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><path d="${p}"/></svg><span>${l}</span></button>`).join('');
+let DP=null,SWOK=false;
+addEventListener('beforeinstallprompt',e=>{e.preventDefault();DP=e;render()});
+addEventListener('appinstalled',()=>{DP=null;render()});
+idb('get').then(h=>{if(h){FH=h;render()}}).catch(()=>{});
 render();
 navigator.storage?.persist?.();
-if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').then(()=>{SWOK=true;render()}).catch(()=>{});
