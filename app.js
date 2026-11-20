@@ -8,7 +8,7 @@ const merge=d=>{const m={...DEF(),...d,cfg:{...DEF().cfg,...d.cfg},inv:{...DEF()
 let S=load(),FH=null,wt;
 function load(){try{const d=JSON.parse(localStorage.getItem(KEY));return d?merge(d):DEF()}catch{return DEF()}}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch{alert('Não foi possível salvar os dados neste navegador.')}clearTimeout(wt);wt=setTimeout(fileWrite,800)};
-const ui={tab:'dash',per:'cur',from:'',to:'',inv:'xp',ch:'all'};
+const ui={tab:'dash',per:'cur',from:'',to:'',inv:'xp',ch:'all',my:'all'};
 
 // ===== Utilitários =====
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
@@ -60,6 +60,18 @@ function chart(D){if(!D.length)return'<p class=mut>Registre os saldos mensais em
   return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Aporte e rendimento por mês"><line x1="0" x2="${W}" y1="${z}" y2="${z}" stroke="currentColor" opacity=".25"/>${D.map(([m,d],i)=>{const cx=gw*i+gw/2;return bar(cx-bw-1,d.ap,'#2563eb','Aporte')+bar(cx+1,d.rend,'#d97706','Rendimento')+`<text x="${cx}" y="${H-4}" text-anchor="middle" font-size="8" fill="currentColor" opacity=".7">${m.slice(5)}/${m.slice(2,4)}</text>`}).join('')}</svg>
   <div class=lg><span><i style="background:#2563eb"></i>Aporte ${money(sum(D,d=>d[1].ap))}</span><span><i style="background:#d97706"></i>Rendimento ${money(sum(D,d=>d[1].rend))}</span></div>`}
 
+function medias(){const ks=[['xp','XP'],['wss','WSS Previdência'],['av','Avenue']],A={};
+  ks.forEach(([k])=>A[k]=stats(k).map((e,i)=>{const x=k=='av'?(e.fx||S.cfg.usd):1;return{m:e.month,ap:e.ap*x,rend:e.rend*x,first:i==0}}));
+  const yrs=[...new Set(Object.values(A).flat().map(e=>e.m.slice(0,4)))].sort();if(!yrs.length)return'';
+  const y=yrs.includes(ui.my)?ui.my:'all',F=L=>y=='all'?L:L.filter(e=>e.m.startsWith(y)),
+  avg=L=>{const r=L.filter(e=>!e.first),sa=sum(L,e=>e.ap),sr=sum(r,e=>e.rend);return{a:L.length?sa/L.length:null,r:r.length?sr/r.length:null,sa,sr}},T={};
+  Object.values(A).forEach(L=>F(L).forEach(e=>{const t=T[e.m]||(T[e.m]={ap:0,rend:0,h:0});t.ap+=e.ap;if(!e.first){t.rend+=e.rend;t.h=1}}));
+  const rows=[...ks.map(([k,n])=>[n,avg(F(A[k]))]),['Total',avg(Object.values(T).map(t=>({ap:t.ap,rend:t.rend,first:!t.h})))]],
+  cell=(v,s,c)=>v==null?'<b>-</b>':`<b class="${c||''}">${money(v)}</b><small>soma ${money(s)}</small>`;
+  return `<div class=card><h4>Médias mensais em R$ (valorização sem aporte)</h4><div class=seg>${['all',...yrs].map(k=>`<button data-a=myr data-id=${k} class="${y==k?'on':''}">${k=='all'?'Total':k}</button>`).join('')}</div>
+  <div class=mtw><div class=mt><small>Conta</small><small>Aporte médio</small><small>Valorização média</small></div>${rows.map(([n,d])=>`<div class=mt><b>${n}</b><div>${cell(d.a,d.sa)}</div><div>${cell(d.r,d.sr,d.r>=0?'in':'out')}</div></div>`).join('')}</div>
+  <small style="margin-top:8px">Média por mês com lançamento. O primeiro mês de cada conta é o ponto de partida e não entra na valorização. Avenue convertida pelo câmbio de cada mês.</small></div>`}
+
 function dash(){const T=totals(),m=inR(range('cur')),i=inc(m),o=outc(m),acc={},
   segc=`<div class=seg>${[['all','Total'],['xp','XP'],['wss','WSS'],['av','Avenue']].map(([k,l])=>`<button data-a=chart data-id=${k} class="${ui.ch==k?'on':''}">${l}</button>`).join('')}</div>`;
   S.tx.forEach(t=>{const k=t.acc||'Sem conta';acc[k]=(acc[k]||0)+signed(t)});
@@ -69,6 +81,7 @@ function dash(){const T=totals(),m=inR(range('cur')),i=inc(m),o=outc(m),acc={},
   <div class="card hero"><h4>Patrimônio líquido</h4><b>${money(T.net)}</b><small>Investimentos ${money(T.inv)} + caixa ${money(T.cash)}</small></div>
   <div class=card><h4>Saldo do mês</h4><div class=cols><div><small>Entradas</small><b class=in>${money(i)}</b></div><div><small>Saídas</small><b class=out>${money(o)}</b></div><div><small>Resultado</small><b class="${i>=o?'in':'out'}">${money(i-o)}</b></div></div></div>
   <div class=card><h4>Aporte e rendimento por mês</h4>${segc}${chart(series(ui.ch))}</div>
+  ${medias()}
   <div class=card><h4>Por corretora</h4>${row('XP',T.xp,T.o.xp.pct,ap('xp'))}${row('WSS Previdência',T.ws,T.o.wss.pct,ap('wss'))}${row('Avenue',T.av,T.o.av.pct,money(T.avU,1)+' a R$ '+S.cfg.usd.toFixed(2).replace('.',','))}</div>
   <div class=card><h4>Contas</h4>${Object.entries(acc).map(([k,v])=>row(esc(k),v)).join('')||'<p class=mut>Cadastre uma transação para ver o saldo por conta.</p>'}</div>`}
 
@@ -138,7 +151,7 @@ async function backup(){const f=new File([JSON.stringify(S,null,1)],'financas-ba
 
 // ===== Ações =====
 const ACT={
-  nav:id=>{ui.tab=id;render();scrollTo(0,0)},per:id=>{ui.per=id;render()},invtab:id=>{ui.inv=id;render()},chart:id=>{ui.ch=id;render()},
+  nav:id=>{ui.tab=id;render();scrollTo(0,0)},per:id=>{ui.per=id;render()},invtab:id=>{ui.inv=id;render()},chart:id=>{ui.ch=id;render()},myr:id=>{ui.my=id;render()},
   close:()=>$('#sheet').hidden=true,addtx:()=>txForm(),edittx:txForm,addinv:()=>invForm(),editinv:invForm,backup,
   install:async()=>{DP.prompt();await DP.userChoice;DP=null;render()},
   link:async()=>{try{FH=await showSaveFilePicker({suggestedName:'financas-backup.json',types:[{accept:{'application/json':['.json']}}]});await idb('put',FH);await fileWrite();render()}catch{}},
