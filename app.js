@@ -67,7 +67,7 @@ function medias(){const ks=[['xp','XP'],['wss','WSS Previdência'],['av','Avenue
   avg=L=>{const r=L.filter(e=>!e.first),sa=sum(L,e=>e.ap),sr=sum(r,e=>e.rend);return{a:L.length?sa/L.length:null,r:r.length?sr/r.length:null,sa,sr}},T={};
   Object.values(A).forEach(L=>F(L).forEach(e=>{const t=T[e.m]||(T[e.m]={ap:0,rend:0,h:0});t.ap+=e.ap;if(!e.first){t.rend+=e.rend;t.h=1}}));
   const rows=[...ks.map(([k,n])=>[n,avg(F(A[k]))]),['Total',avg(Object.values(T).map(t=>({ap:t.ap,rend:t.rend,first:!t.h})))]],
-  cell=(v,s,c)=>v==null?'<b>-</b>':`<b class="${c||''}">${money(v)}</b><small>soma ${money(s)}</small>`;
+  cell=(v,s,c)=>v==null?'<b>-</b>':`<b class="${c||''}">${money(v)}</b>`;
   return `<div class=card><h4>Médias mensais em R$ (valorização sem aporte)</h4><div class=seg>${['all',...yrs].map(k=>`<button data-a=myr data-id=${k} class="${y==k?'on':''}">${k=='all'?'Total':k}</button>`).join('')}</div>
   <div class=mtw><div class=mt><small>Conta</small><small>Aporte médio</small><small>Valorização média</small></div>${rows.map(([n,d])=>`<div class=mt><b>${n}</b><div>${cell(d.a,d.sa)}</div><div>${cell(d.r,d.sr,d.r>=0?'in':'out')}</div></div>`).join('')}</div>
   <small style="margin-top:8px">Média por mês com lançamento. O primeiro mês de cada conta é o ponto de partida e não entra na valorização. Avenue convertida pelo câmbio de cada mês.</small></div>`}

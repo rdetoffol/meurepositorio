@@ -36,3 +36,4 @@ input,select{width:100%;padding:10px;border:1px solid var(--bd);border-radius:10
 .lg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--mut);margin-top:6px}.lg i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px}
 .mt{display:grid;grid-template-columns:1fr 1.1fr 1.1fr;gap:6px;padding:8px 0;border-bottom:1px solid var(--bd);align-items:start}.mt b{font-size:14px;display:block}.mt small{margin:0}
 .mtw .mt:last-child{border-bottom:0;border-top:2px solid var(--bd)}
+.seg{flex-wrap:wrap;gap:2px}.seg button{flex:1 0 22%;min-width:0}
