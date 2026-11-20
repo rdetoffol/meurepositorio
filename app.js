@@ -54,13 +54,15 @@ const row=(n,v,p,sub)=>`<div class=item><div><b>${n}</b>${sub?`<small>${sub}</sm
 const fab=a=>`<button class=fab data-a=${a} aria-label="Adicionar">+</button>`;
 
 function chart(D){if(!D.length)return'<p class=mut>Registre os saldos mensais em Investimentos para ver o gráfico.</p>';
-  const W=320,H=150,P=16,n=D.length,mx=Math.max(1,...D.map(d=>Math.max(d[1].ap,d[1].rend))),mn=Math.min(0,...D.map(d=>d[1].rend)),
-  y=v=>P+(mx-v)/(mx-mn)*(H-2*P-8),z=y(0),gw=W/n,bw=Math.min(14,gw*.36),
-  bar=(x,v,c,t)=>`<rect x="${x}" y="${Math.min(y(v),z)}" width="${bw}" height="${Math.max(1,Math.abs(y(v)-z))}" rx="2" fill="${c}"><title>${t}: ${money(v)}</title></rect>`;
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Aporte e rendimento por mês"><line x1="0" x2="${W}" y1="${z}" y2="${z}" stroke="currentColor" opacity=".25"/>${D.map(([m,d],i)=>{const cx=gw*i+gw/2;return bar(cx-bw-1,d.ap,'#2563eb','Aporte')+bar(cx+1,d.rend,'#d97706','Rendimento')+`<text x="${cx}" y="${H-4}" text-anchor="middle" font-size="8" fill="currentColor" opacity=".7">${m.slice(5)}/${m.slice(2,4)}</text>`}).join('')}</svg>
+  const W=320,H=190,L=36,R=10,P=12,y0=H-46,n=D.length,mx=Math.max(1,...D.map(d=>Math.max(d[1].ap,d[1].rend))),mn=Math.min(0,...D.map(d=>d[1].rend)),
+  y=v=>P+(mx-v)/(mx-mn)*(y0-P),x=i=>L+(n>1?i*(W-L-R)/(n-1):(W-L-R)/2),z=y(0),ml=m=>m.slice(5)+'/'+m.slice(0,4),
+  k=v=>Math.abs(v)>=1e3?(v/1e3).toFixed(Math.abs(v)>=1e4?0:1).replace('.',',')+'k':v.toFixed(0),
+  line=(f,c,t)=>`<path d="${D.map((d,i)=>(i?'L':'M')+x(i).toFixed(1)+' '+y(d[1][f]).toFixed(1)).join('')}" fill="none" stroke="${c}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`+D.map((d,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${y(d[1][f]).toFixed(1)}" r="3" fill="${c}"><title>${t} ${ml(d[0])}: ${money(d[1][f])}</title></circle>`).join(''),
+  yl=v=>`<text x="${L-5}" y="${(y(v)+3).toFixed(1)}" text-anchor="end" font-size="8" fill="currentColor" opacity=".7">${k(v)}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Aporte e rendimento por mês"><line x1="${L}" x2="${W-R}" y1="${y(mx)}" y2="${y(mx)}" stroke="currentColor" opacity=".12"/><line x1="${L}" x2="${W-R}" y1="${z}" y2="${z}" stroke="currentColor" opacity=".3"/>${yl(mx)}${yl(0)}${mn<0?yl(mn):''}${line('ap','#2563eb','Aporte')}${line('rend','#d97706','Rendimento')}${D.map(([m],i)=>`<text transform="translate(${(x(i)+3).toFixed(1)} ${y0+6}) rotate(-90)" text-anchor="end" font-size="8" fill="currentColor" opacity=".7">${ml(m)}</text>`).join('')}</svg>
   <div class=lg><span><i style="background:#2563eb"></i>Aporte ${money(sum(D,d=>d[1].ap))}</span><span><i style="background:#d97706"></i>Rendimento ${money(sum(D,d=>d[1].rend))}</span></div>`}
 
-function medias(){const ks=[['xp','XP'],['wss','WSS Previdência'],['av','Avenue']],A={};
+function medias(){const ks=[['xp','XP'],['wss','WSS'],['av','Avenue']],A={};
   ks.forEach(([k])=>A[k]=stats(k).map((e,i)=>{const x=k=='av'?(e.fx||S.cfg.usd):1;return{m:e.month,ap:e.ap*x,rend:e.rend*x,first:i==0}}));
   const yrs=[...new Set(Object.values(A).flat().map(e=>e.m.slice(0,4)))].sort();if(!yrs.length)return'';
   const y=yrs.includes(ui.my)?ui.my:'all',F=L=>y=='all'?L:L.filter(e=>e.m.startsWith(y)),
@@ -68,7 +70,7 @@ function medias(){const ks=[['xp','XP'],['wss','WSS Previdência'],['av','Avenue
   Object.values(A).forEach(L=>F(L).forEach(e=>{const t=T[e.m]||(T[e.m]={ap:0,rend:0,h:0});t.ap+=e.ap;if(!e.first){t.rend+=e.rend;t.h=1}}));
   const rows=[...ks.map(([k,n])=>[n,avg(F(A[k]))]),['Total',avg(Object.values(T).map(t=>({ap:t.ap,rend:t.rend,first:!t.h})))]],
   cell=(v,s,c)=>v==null?'<b>-</b>':`<b class="${c||''}">${money(v)}</b>`;
-  return `<div class=card><h4>Médias mensais em R$ (valorização sem aporte)</h4><div class=seg>${['all',...yrs].map(k=>`<button data-a=myr data-id=${k} class="${y==k?'on':''}">${k=='all'?'Total':k}</button>`).join('')}</div>
+  return `<div class=card><h4>Médias mensais em R$ (valorização sem aporte)</h4><select id=my style="margin-bottom:10px">${['all',...yrs].map(k=>`<option value=${k} ${y==k?'selected':''}>${k=='all'?'Total (todos os anos)':k}</option>`).join('')}</select>
   <div class=mtw><div class=mt><small>Conta</small><small>Aporte médio</small><small>Valorização média</small></div>${rows.map(([n,d])=>`<div class=mt><b>${n}</b><div>${cell(d.a,d.sa)}</div><div>${cell(d.r,d.sr,d.r>=0?'in':'out')}</div></div>`).join('')}</div>
   <small style="margin-top:8px">Média por mês com lançamento. O primeiro mês de cada conta é o ponto de partida e não entra na valorização. Avenue convertida pelo câmbio de cada mês.</small></div>`}
 
@@ -82,7 +84,7 @@ function dash(){const T=totals(),m=inR(range('cur')),i=inc(m),o=outc(m),acc={},
   <div class=card><h4>Saldo do mês</h4><div class=cols><div><small>Entradas</small><b class=in>${money(i)}</b></div><div><small>Saídas</small><b class=out>${money(o)}</b></div><div><small>Resultado</small><b class="${i>=o?'in':'out'}">${money(i-o)}</b></div></div></div>
   <div class=card><h4>Aporte e rendimento por mês</h4>${segc}${chart(series(ui.ch))}</div>
   ${medias()}
-  <div class=card><h4>Por corretora</h4>${row('XP',T.xp,T.o.xp.pct,ap('xp'))}${row('WSS Previdência',T.ws,T.o.wss.pct,ap('wss'))}${row('Avenue',T.av,T.o.av.pct,money(T.avU,1)+' a R$ '+S.cfg.usd.toFixed(2).replace('.',','))}</div>
+  <div class=card><h4>Por corretora</h4>${row('XP',T.xp,T.o.xp.pct,ap('xp'))}${row('WSS',T.ws,T.o.wss.pct,ap('wss'))}${row('Avenue',T.av,T.o.av.pct,money(T.avU,1)+' a R$ '+S.cfg.usd.toFixed(2).replace('.',','))}</div>
   <div class=card><h4>Contas</h4>${Object.entries(acc).map(([k,v])=>row(esc(k),v)).join('')||'<p class=mut>Cadastre uma transação para ver o saldo por conta.</p>'}</div>`}
 
 function donut(items){const t=sum(items,i=>i[1]);if(!t)return'<p class=mut>Nenhuma despesa no período.</p>';let off=0;
@@ -100,7 +102,7 @@ function tx(){const L=inR(range(ui.per)).sort((x,y)=>y.date.localeCompare(x.date
 
 function inv(){const k=ui.inv,u=k=='av',T=totals(),t=T.o[k],L=stats(k).reverse(),mm=m=>m.slice(5)+'/'+m.slice(0,4),
   seg=`<div class=seg>${[['xp','XP'],['wss','WSS'],['av','Avenue']].map(([a,l])=>`<button data-a=invtab data-id=${a} class="${k==a?'on':''}">${l}</button>`).join('')}</div>`;
-  return seg+`<div class=card><h4>${{xp:'XP',wss:'WSS Previdência',av:'Avenue'}[k]}: saldo atual</h4><b class=big>${money(t.saldo,u)}</b>${u?`<small>${money(T.av)} no câmbio de R$ ${S.cfg.usd.toFixed(2).replace('.',',')}</small>`:''}
+  return seg+`<div class=card><h4>${{xp:'XP',wss:'WSS',av:'Avenue'}[k]}: saldo atual</h4><b class=big>${money(t.saldo,u)}</b>${u?`<small>${money(T.av)} no câmbio de R$ ${S.cfg.usd.toFixed(2).replace('.',',')}</small>`:''}
   <div class=cols style="margin-top:10px"><div><small>Rendimento acumulado</small><b class="${t.rend>=0?'in':'out'}">${money(t.rend,u)}</b>${pl(t.pct)}</div><div><small>Aportes registrados</small><b>${money(t.ap,u)}</b></div></div></div>
   <div class=card><h4>Histórico mensal</h4>${L.map(e=>`<div class=item data-a=editinv data-id=${e.id}><div><b>${mm(e.month)}</b><small>Aporte ${money(e.ap,u)}${k=='wss'?` (patronal ${money(e.patr||0)})`:''}</small></div><div class=r><b>${money(e.saldo,u)}</b><small class="${e.rend>=0?'in':'out'}">${e.pct==null?'ponto de partida':money(e.rend,u)+' ('+pct(e.pct)+')'}</small></div></div>`).join('')||'<p class=mut>Nenhum mês registrado. Toque em + e informe o saldo total.</p>'}</div>${fab('addinv')}`}
 
@@ -163,6 +165,7 @@ document.addEventListener('click',e=>{if(e.target.id=='sheet')return ACT.close()
 document.addEventListener('change',e=>{const t=e.target;
   if(t.name=='type')t.form.elements.cat.innerHTML=CAT[t.value].map(x=>`<option>${x}</option>`).join('');
   else if(t.id=='theme'){S.cfg.theme=t.value;save();theme()}
+  else if(t.id=='my'){ui.my=t.value;render()}
   else if(t.id=='auto'){S.cfg.autoDays=+t.value;save()}
   else if(t.id=='usd'){S.cfg.usd=parseFloat(t.value)||S.cfg.usd;save()}
   else if(t.id=='from'||t.id=='to'){ui[t.id]=t.value;render()}
